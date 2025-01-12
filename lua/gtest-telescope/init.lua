@@ -44,31 +44,28 @@
 --   ]
 -- }
 
--- TODO: class names should have prefix gtest-telescope. (?)
-
---- @class GTest_JsonTestItem
+--- @class gtest-telescope.JsonTestItem
 --- @field name string
 --- @field file string
 --- @field line number
 --- @field type_param string?
 --- @field value_param string?
 
---- @class GTest_JsonTestSuite
+--- @class gtest-telescope.JsonTestSuite
 --- @field name string
---- @field testsuite GTest_JsonTestItem[]
+--- @field testsuite gtest-telescope.JsonTestItem[]
 
---- @class GTest_Json
---- @field testsuites GTest_JsonTestSuite[]
+--- @class gtest-telescope.Json
+--- @field testsuites gtest-telescope.JsonTestSuite[]
 
---- @class GTest_JsonReport
+--- @class gtest-telescope.JsonReport
 --- @field exe string
---- @field json GTest_Json
+--- @field json gtest-telescope.Json
 
--- TODO: include type_param and value_param in display name (if not raw bytes)
+-- TODO: add keybinding to open file at test declaration (possibly without closing telescope)
+-- TODO: parse terminal output and send failing tests to quickfix
 
----
-
---- @class GTest_TestEntry
+--- @class gtest-telescope.TestEntry
 --- @field display_text string
 --- @field display_style table?
 --- @field test_filter string
@@ -76,6 +73,7 @@
 --- @field path string?
 --- @field line number?
 --- @field test_suite string?
+--- @field type_param string?
 
 local config = require("gtest-telescope.config")
 local terminal = require("gtest-telescope.terminal")
@@ -90,6 +88,8 @@ end
 
 local cache = {
     test_lists = {},
+    picker = nil,
+    last_run = nil,
 }
 
 local __log = function(...)
@@ -131,7 +131,7 @@ local find_executables = function()
 end
 
 --- @param executable string
---- @return GTest_JsonReport?
+--- @return gtest-telescope.JsonReport?
 local generate_gtest_report = function(executable)
     -- FIX: Run this command asynchronously in case the gtest command is slow
     -- Hint: see plenary.async
@@ -175,24 +175,34 @@ local get_mtime = function(path)
 end
 
 --- @param suite_name string
+--- @param type_param string?
 --- @param exe string
---- @return GTest_TestEntry
-local make_entry_for_test_suite = function(suite_name, exe)
+--- @return gtest-telescope.TestEntry
+local make_entry_for_test_suite = function(suite_name, type_param, exe)
+    local text = suite_name
+
+    if type_param then
+        text = text .. "  [" .. type_param .. "]"
+    end
+
+    local style = { { { #suite_name, #text }, "TelescopeResultsComment" } }
+
     return {
-        display_text = suite_name,
-        display_style = nil,
+        display_text = text,
+        display_style = style,
         test_filter = suite_name .. ".*",
         exe = exe,
         path = nil,
         line = nil,
         test_suite = nil,
+        type_param = nil,
     }
 end
 
---- @param test GTest_JsonTestItem
+--- @param test gtest-telescope.JsonTestItem
 --- @param suite_name string
 --- @param exe string
---- @return GTest_TestEntry
+--- @return gtest-telescope.TestEntry
 local make_entry_for_single_test = function(test, suite_name, exe)
     local text = "  " .. test.name .. "  " .. suite_name
     local style = { { { #test.name + 2, #text }, "TelescopeResultsComment" } }
@@ -205,27 +215,34 @@ local make_entry_for_single_test = function(test, suite_name, exe)
         path = test.file,
         line = test.line,
         test_suite = suite_name,
+        type_param = test.type_param,
     }
 end
 
---- @param report GTest_JsonReport
---- @return GTest_TestEntry[]?
+--- @param report gtest-telescope.JsonReport
+--- @return gtest-telescope.TestEntry[]?
 local generate_test_list_from_report = function(report)
     local tests = {}
 
     for _, testsuite in ipairs(report.json.testsuites) do
-        table.insert(tests, make_entry_for_test_suite(testsuite.name, report.exe))
+        local type_param
 
         for _, test in ipairs(testsuite.testsuite) do
             table.insert(tests, make_entry_for_single_test(test, testsuite.name, report.exe))
+
+            if test.type_param then
+                type_param = test.type_param
+            end
         end
+
+        table.insert(tests, make_entry_for_test_suite(testsuite.name, type_param, report.exe))
     end
 
     return tests
 end
 
 --- @param executables string|string[]
---- @return GTest_TestEntry[]
+--- @return gtest-telescope.TestEntry[]
 local get_test_list = function(executables)
     local _get_test_list = function(exe)
         local mt = get_mtime(exe)
@@ -328,8 +345,8 @@ local get_sorter = function()
     })
 end
 
---- @param tests GTest_TestEntry[]
---- @param on_choice function(selection:GTest_TestEntry[])
+--- @param tests gtest-telescope.TestEntry[]
+--- @param on_choice function(selection:gtest-telescope.TestEntry[])
 local telescope_pick_tests = function(tests, on_choice)
     local action_state = require("telescope.actions.state")
     local action_utils = require("telescope.actions.utils")
@@ -337,7 +354,7 @@ local telescope_pick_tests = function(tests, on_choice)
     local finders = require("telescope.finders")
     local pickers = require("telescope.pickers")
 
-    on_choice = vim.schedule_wrap(on_choice)
+    local on_choice_wrapped = vim.schedule_wrap(on_choice)
 
     -- sort alphabetically
     table.sort(tests, function(a, b)
@@ -350,7 +367,7 @@ local telescope_pick_tests = function(tests, on_choice)
             finder = finders.new_table({
                 results = tests,
                 entry_maker = function(entry)
-                    -- TODO: could also add file path (path) and line number (lnum) to preview the test location
+                    -- NOTE: could also add file path (path) and line number (lnum) to preview the test location
                     --       see https://github.com/nvim-telescope/telescope.nvim/blob/master/developers.md
                     return {
                         value = entry,
@@ -362,6 +379,8 @@ local telescope_pick_tests = function(tests, on_choice)
                 end,
             }),
             sorter = get_sorter(),
+            -- TODO: use selection_strategy to limit selection to single?
+            -- selection_strategy = "reset", -- follow, reset, row
             attach_mappings = function(prompt_bufnr)
                 actions.select_default:replace(function()
                     local current_picker = action_state.get_current_picker(prompt_bufnr)
@@ -383,7 +402,13 @@ local telescope_pick_tests = function(tests, on_choice)
                         table.insert(selected_tests, item.value)
                     end
 
-                    on_choice(selected_tests)
+                    cache.picker = current_picker
+                    cache.last_run = {
+                        on_choice = on_choice_wrapped,
+                        tests = selected_tests,
+                    }
+
+                    on_choice_wrapped(selected_tests)
                 end)
 
                 return true
@@ -392,7 +417,7 @@ local telescope_pick_tests = function(tests, on_choice)
         :find()
 end
 
---- @param tests GTest_TestEntry[]
+--- @param tests gtest-telescope.TestEntry[]
 --- @return string[]
 local build_test_commands = function(tests)
     local test_filters = {}
@@ -414,30 +439,25 @@ local build_test_commands = function(tests)
     return commands
 end
 
---- @param tests GTest_TestEntry[]
-local print_selected_tests = function(tests, _)
+--- @param tests gtest-telescope.TestEntry[]
+local print_tests = function(tests)
     local commands = build_test_commands(tests)
 
     print(vim.inspect(tests))
     print(vim.inspect(commands))
+end
+
+--- @param tests gtest-telescope.TestEntry[]
+local run_tests = function(tests)
+    local commands = build_test_commands(tests)
 
     for _, cmd in ipairs(commands) do
         terminal.exec(cmd, config.executables_folder)
     end
 end
 
-M.print_tests = function()
-    local executables = find_executables()
-
-    local test_list = get_test_list(executables)
-    if vim.tbl_isempty(test_list) then
-        return
-    end
-
-    telescope_pick_tests(test_list, print_selected_tests)
-end
-
-M.print_tests_single_exe = function()
+--- @param on_choice function(selection:gtest-telescope.TestEntry[])
+local pick_tests_single_exe = function(on_choice)
     local executables = find_executables()
 
     select_executable(executables, function(exe)
@@ -450,11 +470,12 @@ M.print_tests_single_exe = function()
             return
         end
 
-        telescope_pick_tests(test_list, print_selected_tests)
+        telescope_pick_tests(test_list, on_choice)
     end)
 end
 
-M.print_tests_current_buffer = function()
+--- @param on_choice function(selection:gtest-telescope.TestEntry[])
+local pick_tests_current_buffer = function(on_choice)
     local executables = find_executables()
     local test_list = get_test_list(executables)
 
@@ -466,7 +487,7 @@ M.print_tests_current_buffer = function()
             return false
         end
 
-        test_suites[item.test_suite] = item.exe
+        test_suites[item.test_suite] = { exe = item.exe, type_param = item.type_param }
         return true
     end, test_list)
 
@@ -475,15 +496,16 @@ M.print_tests_current_buffer = function()
     end
 
     -- re-add the test suites
-    for test_suite, exe in pairs(test_suites) do
+    for test_suite, tbl in pairs(test_suites) do
         __log("adding test suite ", test_suite)
-        table.insert(filtered_list, make_entry_for_test_suite(test_suite, exe))
+        table.insert(filtered_list, make_entry_for_test_suite(test_suite, tbl.type_param, tbl.exe))
     end
 
-    telescope_pick_tests(filtered_list, print_selected_tests)
+    telescope_pick_tests(filtered_list, on_choice)
 end
 
-M.print_tests_current_line = function()
+--- @param on_choice function(selection:gtest-telescope.TestEntry[])
+local pick_tests_current_line = function(on_choice)
     local executables = find_executables()
     local test_list = get_test_list(executables)
 
@@ -520,87 +542,89 @@ M.print_tests_current_line = function()
             return false
         end
 
-        test_suites[item.test_suite] = item.exe
+        test_suites[item.test_suite] = { exe = item.exe, type_param = item.type_param }
         return true
     end, filtered_list)
 
     -- re-add the test suites
-    for test_suite, exe in pairs(test_suites) do
+    for test_suite, tbl in pairs(test_suites) do
         __log("adding test suite ", test_suite)
-        table.insert(filtered_list, make_entry_for_test_suite(test_suite, exe))
+        table.insert(filtered_list, make_entry_for_test_suite(test_suite, tbl.type_param, tbl.exe))
     end
 
-    telescope_pick_tests(filtered_list, print_selected_tests)
+    telescope_pick_tests(filtered_list, on_choice)
 end
 
--- --- @param test_name table
--- --- @param json table
--- --- @param settings gtest.settings
--- local run_dap_test_from_test_name = function(test_name, json, settings)
---     local dap = require("dap")
---
---     if json ~= nil then
---         local discovered_tests = json.tests
---         local dap_cpp_config = nil
---
---         for _, test in ipairs(discovered_tests) do
---             local command = test.command
---             if command ~= nil then
---                 if test_name == test.name then
---                     local properties = test.properties
---                     local working_dir = settings:get().dap_config.cwd or vim.fn.getcwd() -- Set default working_dir to cwd
---                     local program_path = table.remove(command, 1)
---
---                     if properties ~= nil then
---                         for _, property in ipairs(properties) do
---                             if property.name == "WORKING_DIRECTORY" then
---                                 working_dir = property.value -- Update working_dir from ctest value
---                                 break
---                             end
---                         end
---                     end
---
---                     local processed_commands = {}
---                     for _, arg in ipairs(command) do
---                         local processed_arg = string.gsub(arg, "%*", "\\*")
---                         table.insert(processed_commands, processed_arg)
---                     end
---
---                     local config = {
---                         program = program_path,
---                         cwd = working_dir,
---                         args = processed_commands,
---                     }
---
---                     config = vim.tbl_deep_extend("keep", config, settings:get().dap_config)
---
---                     local enrich_config = {
---                         type = "cppdbg",
---                         name = "Launch test: " .. test_name,
---                         request = "launch",
---                     }
---
---                     config = vim.tbl_deep_extend("keep", config, enrich_config)
---
---                     dap_cpp_config = config
---                     break
---                 end
---             end
---         end
---
---         if dap_cpp_config == nil then
---             error("Couldn't find test to run")
---         else
---             dap.run(dap_cpp_config)
---         end
---     end
--- end
--- function App:pick_test_and_debug(opts)
---     local json = get_ctest_json(self.settings)
---     if json ~= nil then
---         local test_list = get_test_list_from_json(json)
---         telescope_pick_tests(opts, test_list, json, self.settings, run_dap_test_from_test_name)
---     end
--- end
+M.run_tests_single_exe = function()
+    pick_tests_single_exe(run_tests)
+end
+
+M.run_tests_current_buffer = function()
+    pick_tests_current_buffer(run_tests)
+end
+
+M.run_tests_current_line = function()
+    pick_tests_current_line(run_tests)
+end
+
+--- @param tests gtest-telescope.TestEntry[]
+local debug_test = function(tests)
+    assert(#tests == 1)
+
+    local test = tests[1]
+
+    local dap_config = {
+        program = vim.fs.joinpath(config.executables_folder, test.exe),
+        cwd = config.executables_folder,
+        args = { "--gtest_filter=" .. test.test_filter },
+    }
+
+    dap_config = vim.tbl_deep_extend("keep", dap_config, config.dap_config)
+
+    local enrich_config = {
+        type = "cppdbg",
+        name = "Launch test: " .. test.test_filter,
+        request = "launch",
+    }
+
+    dap_config = vim.tbl_deep_extend("keep", dap_config, enrich_config)
+
+    local dap = require("dap")
+    dap.run(dap_config)
+end
+
+M.debug_test_single_exe = function()
+    pick_tests_single_exe(debug_test)
+end
+
+M.debug_tests_current_buffer = function()
+    pick_tests_current_buffer(debug_test)
+end
+
+M.debug_tests_current_line = function()
+    pick_tests_current_line(debug_test)
+end
+
+M.resume_last = function()
+    if not cache.picker then
+        return
+    end
+
+    -- NOTE: selected items are not highlighted, but ":Telescope resume" does the same
+    cache.picker.get_window_options = nil
+    require("telescope.pickers").new(config.telescope, cache.picker):find()
+end
+
+M.run_last = function()
+    if not cache.last_run then
+        return
+    end
+
+    cache.last_run.on_choice(cache.last_run.tests)
+end
+
+M.toggle_term = function()
+    terminal.toggle_term()
+end
 
 return M

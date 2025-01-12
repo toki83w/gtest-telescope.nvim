@@ -1,43 +1,77 @@
 local Terminal = require("toggleterm.terminal").Terminal
 
+--- @class gtest-telescope.TerminalConfig
+--- @field size number?
+--- @field direction 'float'|'vertical'|'horizontal'|'tab'?
+--- @field highlights ToggleTermHighlights?
+--- @field auto_scroll boolean?
+--- @field close_on_exit boolean?
+--- @field keep_after_exit boolean?
+--- @field start_in_insert boolean?
+--- @field hidden boolean?
+--- @field toggle_mapping string|string[]?
+--- @field display_name string
+
+--- @class gtest-telescope.Terminal
+--- @field setup function(opts: gtest-telescope.TerminalConfig)
+--- @field exec function(cmd: string, dir: string)
+--- @field toggle_term function()
+
+--- @type Terminal
+local term
+
+--- @type gtest-telescope.TerminalConfig
+local config
+
 local M = {}
 
--- TODO: LuaDoc
-
+--- @param opts gtest-telescope.TerminalConfig
 M.setup = function(opts)
-    M.opts = vim.tbl_extend("keep", opts or {}, {
+    config = vim.tbl_extend("keep", opts or {}, {
+        display_name = "gtest-telescope",
         size = nil,
         direction = nil,
         highlights = nil,
         auto_scroll = nil,
-        close_on_exit = false,
+        close_on_exit = true,
         keep_after_exit = nil,
         start_in_insert = false,
-        quit_on_exit = "never",
         hidden = false,
-        on_create = nil,
-        on_exit = nil,
     })
 
-    -- TODO: prevent insert mode
-    -- TODO: keymap to toggle terminal
-    M.term = Terminal:new({
+    term = Terminal:new({
         cmd = nil,
-        highlights = M.opts.highlights,
-        direction = M.opts.direction,
-        auto_scroll = M.opts.auto_scroll,
-        close_on_exit = M.opts.close_on_exit,
-        keep_after_exit = M.opts.keep_after_exit,
-        start_in_insert = M.opts.start_in_insert,
-        hidden = M.opts.hidden,
+        display_name = config.display_name,
+        highlights = config.highlights,
+        direction = config.direction,
+        auto_scroll = config.auto_scroll,
+        close_on_exit = config.close_on_exit,
+        keep_after_exit = config.keep_after_exit,
+        start_in_insert = config.start_in_insert,
+        insert_mappings = false,
+        hidden = config.hidden,
         count = 40,
+        on_create = function(t)
+            -- prevent from entering insert mode
+            vim.keymap.set("n", "i", "<Nop>", { buffer = t.bufnr })
+            vim.keymap.set("n", "I", "<Nop>", { buffer = t.bufnr })
+            vim.keymap.set("n", "a", "<Nop>", { buffer = t.bufnr })
+            vim.keymap.set("n", "A", "<Nop>", { buffer = t.bufnr })
+        end,
     })
 end
 
+--- @param cmd string
+--- @param dir string
 M.exec = function(cmd, dir)
-    M.term:open(M.opts.size, M.opts.direction)
-    M.term:change_dir(dir)
-    M.term:send(cmd)
+    term:open(config.size, config.direction)
+    term:change_dir(dir)
+    term:send(cmd)
 end
 
+M.toggle_term = function()
+    term:toggle()
+end
+
+--- @type gtest-telescope.Terminal
 return M
