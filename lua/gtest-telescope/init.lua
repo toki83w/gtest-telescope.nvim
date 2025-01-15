@@ -250,7 +250,7 @@ end
 --- @return gtest-telescope.TestEntry[]
 local get_test_list = function(executables)
     local _get_test_list = function(exe)
-        local mt = get_mtime(exe)
+        local mt = get_mtime(vim.fs.joinpath(config.executables_folder, exe))
         local cached = cache.test_lists[exe]
 
         if cached and (cached.mtime.sec > mt.sec or (cached.mtime.sec == mt.sec and cached.mtime.nsec >= mt.nsec)) then
