@@ -352,7 +352,8 @@ end
 
 --- @param tests gtest-telescope.TestEntry[]
 --- @param on_choice function(selection:gtest-telescope.TestEntry[])
-local telescope_pick_tests = function(tests, on_choice)
+--- @param single_selection boolean
+local telescope_pick_tests = function(tests, on_choice, single_selection)
     local action_state = require("telescope.actions.state")
     local action_utils = require("telescope.actions.utils")
     local actions = require("telescope.actions")
@@ -384,9 +385,7 @@ local telescope_pick_tests = function(tests, on_choice)
                 end,
             }),
             sorter = get_sorter(),
-            -- TODO: use selection_strategy to limit selection to single?
-            -- selection_strategy = "reset", -- follow, reset, row
-            attach_mappings = function(prompt_bufnr)
+            attach_mappings = function(prompt_bufnr, map)
                 actions.select_default:replace(function()
                     local current_picker = action_state.get_current_picker(prompt_bufnr)
                     local has_multi_selection = (next(current_picker:get_multi_selection()) ~= nil)
@@ -415,6 +414,11 @@ local telescope_pick_tests = function(tests, on_choice)
 
                     on_choice_wrapped(selected_tests)
                 end)
+
+                if single_selection then
+                    map({ "i", "n" }, "<Tab>", actions.nop, {})
+                    map({ "i", "n" }, "<S-Tab>", actions.nop, {})
+                end
 
                 return true
             end,
@@ -461,8 +465,35 @@ local run_tests = function(tests)
     end
 end
 
+--- @param tests gtest-telescope.TestEntry[]
+local debug_test = function(tests)
+    assert(#tests == 1)
+
+    local test = tests[1]
+
+    local dap_config = {
+        program = vim.fs.joinpath(config.executables_folder, test.exe),
+        cwd = config.executables_folder,
+        args = { "--gtest_filter=" .. test.test_filter },
+    }
+
+    dap_config = vim.tbl_deep_extend("keep", dap_config, config.dap_config)
+
+    local enrich_config = {
+        type = "cppdbg",
+        name = "Launch test: " .. test.test_filter,
+        request = "launch",
+    }
+
+    dap_config = vim.tbl_deep_extend("keep", dap_config, enrich_config)
+
+    local dap = require("dap")
+    dap.run(dap_config)
+end
+
 --- @param on_choice function(selection:gtest-telescope.TestEntry[])
-local pick_tests_single_exe = function(on_choice)
+--- @param single_selection boolean
+local pick_tests_single_exe = function(on_choice, single_selection)
     local executables = find_executables()
 
     select_executable(executables, function(exe)
@@ -475,12 +506,13 @@ local pick_tests_single_exe = function(on_choice)
             return
         end
 
-        telescope_pick_tests(test_list, on_choice)
+        telescope_pick_tests(test_list, on_choice, single_selection)
     end)
 end
 
 --- @param on_choice function(selection:gtest-telescope.TestEntry[])
-local pick_tests_current_buffer = function(on_choice)
+--- @param single_selection boolean
+local pick_tests_current_buffer = function(on_choice, single_selection)
     local executables = find_executables()
     local test_list = get_test_list(executables)
 
@@ -502,15 +534,15 @@ local pick_tests_current_buffer = function(on_choice)
 
     -- re-add the test suites
     for test_suite, tbl in pairs(test_suites) do
-        __log("adding test suite ", test_suite)
         table.insert(filtered_list, make_entry_for_test_suite(test_suite, tbl.type_param, tbl.exe))
     end
 
-    telescope_pick_tests(filtered_list, on_choice)
+    telescope_pick_tests(filtered_list, on_choice, single_selection)
 end
 
 --- @param on_choice function(selection:gtest-telescope.TestEntry[])
-local pick_tests_current_line = function(on_choice)
+--- @param single_selection boolean
+local pick_tests_current_line = function(on_choice, single_selection)
     local executables = find_executables()
     local test_list = get_test_list(executables)
 
@@ -553,61 +585,34 @@ local pick_tests_current_line = function(on_choice)
 
     -- re-add the test suites
     for test_suite, tbl in pairs(test_suites) do
-        __log("adding test suite ", test_suite)
         table.insert(filtered_list, make_entry_for_test_suite(test_suite, tbl.type_param, tbl.exe))
     end
 
-    telescope_pick_tests(filtered_list, on_choice)
+    telescope_pick_tests(filtered_list, on_choice, single_selection)
 end
 
 M.run_tests_single_exe = function()
-    pick_tests_single_exe(run_tests)
+    pick_tests_single_exe(run_tests, false)
 end
 
 M.run_tests_current_buffer = function()
-    pick_tests_current_buffer(run_tests)
+    pick_tests_current_buffer(run_tests, false)
 end
 
 M.run_tests_current_line = function()
-    pick_tests_current_line(run_tests)
-end
-
---- @param tests gtest-telescope.TestEntry[]
-local debug_test = function(tests)
-    assert(#tests == 1)
-
-    local test = tests[1]
-
-    local dap_config = {
-        program = vim.fs.joinpath(config.executables_folder, test.exe),
-        cwd = config.executables_folder,
-        args = { "--gtest_filter=" .. test.test_filter },
-    }
-
-    dap_config = vim.tbl_deep_extend("keep", dap_config, config.dap_config)
-
-    local enrich_config = {
-        type = "cppdbg",
-        name = "Launch test: " .. test.test_filter,
-        request = "launch",
-    }
-
-    dap_config = vim.tbl_deep_extend("keep", dap_config, enrich_config)
-
-    local dap = require("dap")
-    dap.run(dap_config)
+    pick_tests_current_line(run_tests, false)
 end
 
 M.debug_test_single_exe = function()
-    pick_tests_single_exe(debug_test)
+    pick_tests_single_exe(debug_test, true)
 end
 
 M.debug_tests_current_buffer = function()
-    pick_tests_current_buffer(debug_test)
+    pick_tests_current_buffer(debug_test, true)
 end
 
 M.debug_tests_current_line = function()
-    pick_tests_current_line(debug_test)
+    pick_tests_current_line(debug_test, true)
 end
 
 M.resume_last = function()
