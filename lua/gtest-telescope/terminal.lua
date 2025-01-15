@@ -57,6 +57,11 @@ M.setup = function(opts)
             vim.keymap.set("n", "I", "<Nop>", { buffer = t.bufnr })
             vim.keymap.set("n", "a", "<Nop>", { buffer = t.bufnr })
             vim.keymap.set("n", "A", "<Nop>", { buffer = t.bufnr })
+
+            -- send Ctrl-C to the terminal (ascii code for Ctrl-C is 3)
+            vim.keymap.set("n", "<C-c>", function()
+                t:send("\x03", false)
+            end, { buffer = t.bufnr })
         end,
     })
 end
@@ -71,6 +76,10 @@ end
 
 M.toggle_term = function()
     term:toggle()
+end
+
+M.kill_term = function()
+    term:shutdown()
 end
 
 --- @type gtest-telescope.Terminal

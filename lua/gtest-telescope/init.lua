@@ -632,4 +632,8 @@ M.toggle_term = function()
     terminal.toggle_term()
 end
 
+M.kill_term = function()
+    terminal.kill_term()
+end
+
 return M
