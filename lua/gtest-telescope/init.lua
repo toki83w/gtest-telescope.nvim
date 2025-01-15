@@ -91,6 +91,12 @@ local cache = {
     last_run = nil,
 }
 
+M.clear_cache = function()
+    cache.test_lists = {}
+    cache.picker = nil
+    cache.last_run = nil
+end
+
 local __log = function(...)
     print(...)
 end
