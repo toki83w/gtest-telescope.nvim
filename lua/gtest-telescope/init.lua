@@ -62,7 +62,6 @@
 --- @field exe string
 --- @field json gtest-telescope.Json
 
--- TODO: add keybinding to open file at test declaration (possibly without closing telescope)
 -- TODO: parse terminal output and send failing tests to quickfix
 
 --- @class gtest-telescope.TestEntry
@@ -367,14 +366,14 @@ local telescope_pick_tests = function(tests, on_choice)
             finder = finders.new_table({
                 results = tests,
                 entry_maker = function(entry)
-                    -- NOTE: could also add file path (path) and line number (lnum) to preview the test location
-                    --       see https://github.com/nvim-telescope/telescope.nvim/blob/master/developers.md
                     return {
                         value = entry,
                         display = function(item)
                             return item.value.display_text, item.value.display_style
                         end,
                         ordinal = entry.test_filter,
+                        path = entry.path, -- used by edit action
+                        lnum = entry.line, -- used by edit action
                     }
                 end,
             }),

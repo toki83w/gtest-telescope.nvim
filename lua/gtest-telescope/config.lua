@@ -20,6 +20,11 @@ local default_config = {
             map({ "i", "n" }, "<M-x>", function(_prompt_bufnr)
                 require("telescope.actions").drop_all(_prompt_bufnr)
             end, { noremap = true, silent = true })
+
+            map({ "i", "n" }, "<M-CR>", function(_prompt_bufnr)
+                require("gtest-telescope.actions").go_to_test_definition(_prompt_bufnr)
+            end, { noremap = true, silent = true })
+
             return true
         end,
     },
