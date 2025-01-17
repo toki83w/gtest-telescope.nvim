@@ -33,6 +33,16 @@ local default_config = {
         type = "cppdbg",
         request = "launch",
     },
+    icons = {
+        failure = {
+            icon = "",
+            hl_group = "DiagnosticError",
+        },
+        success = {
+            icon = "",
+            hl_group = "DiagnosticOk",
+        },
+    },
 }
 
 --- @type gtest-telescope.Config

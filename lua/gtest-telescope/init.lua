@@ -62,43 +62,94 @@
 --- @field exe string
 --- @field json gtest-telescope.Json
 
--- TODO: parse terminal output and send failing tests to quickfix
+-- TODO: toggle show only test suites
+-- TODO: icon for test suites (failure if any failure, success if all success)
+-- TODO: check what happens when the file is modified - should we keep the previous results?
+
+---@enum TestState
+local TestState = { NONE = 0, SUCCESS = 1, FAILURE = 2 }
 
 --- @class gtest-telescope.TestEntry
---- @field display_text string
---- @field display_style table?
+--- @field display_func function(icon:table) -> string,table
 --- @field test_filter string
 --- @field exe string
 --- @field path string?
 --- @field line number?
 --- @field test_suite string?
 --- @field type_param string?
+--- @field state TestState
+
+--- @class gtest-telescope.CachedTestList
+--- @field tests gtest-telescope.TestEntry[]
+--- @field mtime table
+
+--- @class gtest-telescope.LastRun
+--- @field on_choice function(selection:gtest-telescope.TestEntry[])
+--- @field tests gtest-telescope.TestEntry[]
 
 local config = require("gtest-telescope.config")
 local terminal = require("gtest-telescope.terminal")
 
-local M = {}
-
---- @param opts table
-M.setup = function(opts)
-    config.update(opts)
-    terminal.setup(config.toggleterm)
+local __log = function(...)
+    print(...)
 end
 
 local cache = {
+    --- @type table<string, gtest-telescope.CachedTestList>
     test_lists = {},
     picker = nil,
+    --- @type gtest-telescope.LastRun?
     last_run = nil,
 }
 
-M.clear_cache = function()
-    cache.test_lists = {}
-    cache.picker = nil
-    cache.last_run = nil
-end
+--- @param line string
+local parse_output_line = function(line)
+    -- [  FAILED  ] CanOpenDs402EncoderTest.Creation (20 ms)
+    -- [       OK ] CanOpenDs402EncoderTest.CreationWithMissingOptions (36 ms)
 
-local __log = function(...)
-    print(...)
+    local successPattern = "%[       OK %]%s*(%w+%.%w+)"
+    local failurePattern = "%[  FAILED  %]%s*(%w+%.%w+)"
+
+    if not cache.last_run or not cache.last_run.tests or not cache.test_lists then
+        return
+    end
+
+    local exe = cache.last_run.tests[1].exe
+
+    local tests = cache.test_lists[exe]
+    if not tests or not tests.tests then
+        return
+    end
+    tests = tests.tests
+
+    local parse = function(pattern)
+        local _, _, test = string.find(line, pattern)
+        return test
+    end
+
+    local set_state = function(test_name, state)
+        -- __log("parsed test", test_name)
+        for _, test in ipairs(tests) do
+            __log(test.test_filter)
+            if test.test_filter == test_name then
+                test.state = state
+                -- __log(test_name, "state", state)
+                return
+            end
+        end
+    end
+
+    local test_name = parse(successPattern)
+    if test_name then
+        set_state(test_name, TestState.SUCCESS)
+        return
+    end
+
+    test_name = parse(failurePattern)
+    if test_name then
+        set_state(test_name, TestState.FAILURE)
+        return
+    end
 end
 
 --- @return string[]
@@ -193,14 +244,16 @@ local make_entry_for_test_suite = function(suite_name, type_param, exe)
     local style = { { { #suite_name, #text }, "TelescopeResultsComment" } }
 
     return {
-        display_text = text,
-        display_style = style,
+        display_func = function(_)
+            return text, style
+        end,
         test_filter = suite_name .. ".*",
         exe = exe,
         path = nil,
         line = nil,
         test_suite = nil,
         type_param = nil,
+        state = TestState.NONE,
     }
 end
 
@@ -209,18 +262,34 @@ end
 --- @param exe string
 --- @return gtest-telescope.TestEntry
 local make_entry_for_single_test = function(test, suite_name, exe)
-    local text = "  " .. test.name .. "  " .. suite_name
-    local style = { { { #test.name + 2, #text }, "TelescopeResultsComment" } }
+    local f = function(icon)
+        local text
+        local style
+
+        if icon then
+            text = icon.icon .. " " .. test.name .. "  " .. suite_name
+            style = {
+                { { 0, #icon.icon }, icon.hl_group },
+                { { #icon.icon + 1 + #test.name + 2, #text }, "TelescopeResultsComment" },
+            }
+        else
+            text = "  " .. test.name .. "  " .. suite_name
+            style = {
+                { { 2 + #test.name + 2, #text }, "TelescopeResultsComment" },
+            }
+        end
+        return text, style
+    end
 
     return {
-        display_text = text,
-        display_style = style,
+        display_func = f,
         test_filter = suite_name .. "." .. test.name,
         exe = exe,
         path = test.file,
         line = test.line,
         test_suite = suite_name,
         type_param = test.type_param,
+        state = TestState.NONE,
     }
 end
 
@@ -359,6 +428,7 @@ local telescope_pick_tests = function(tests, on_choice, single_selection)
     local actions = require("telescope.actions")
     local finders = require("telescope.finders")
     local pickers = require("telescope.pickers")
+    local utils = require("telescope.utils")
 
     local on_choice_wrapped = vim.schedule_wrap(on_choice)
 
@@ -376,7 +446,9 @@ local telescope_pick_tests = function(tests, on_choice, single_selection)
                     return {
                         value = entry,
                         display = function(item)
-                            return item.value.display_text, item.value.display_style
+                            local icon = item.value.state == TestState.SUCCESS and config.icons.success
+                                or item.value.state == TestState.FAILURE and config.icons.failure
+                            return item.value.display_func(icon)
                         end,
                         ordinal = entry.test_filter,
                         path = entry.path, -- used by edit action
@@ -589,6 +661,20 @@ local pick_tests_current_line = function(on_choice, single_selection)
     end
 
     telescope_pick_tests(filtered_list, on_choice, single_selection)
+end
+
+local M = {}
+
+--- @param opts table
+M.setup = function(opts)
+    config.update(opts)
+    terminal.setup(config.toggleterm, parse_output_line)
+end
+
+M.clear_cache = function()
+    cache.test_lists = {}
+    cache.picker = nil
+    cache.last_run = nil
 end
 
 M.run_tests_single_exe = function()

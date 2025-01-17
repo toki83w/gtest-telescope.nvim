@@ -26,7 +26,8 @@ local config
 local M = {}
 
 --- @param opts gtest-telescope.TerminalConfig
-M.setup = function(opts)
+--- @param on_output_line function(string)
+M.setup = function(opts, on_output_line)
     config = vim.tbl_extend("keep", opts or {}, {
         display_name = "gtest-telescope",
         size = nil,
@@ -62,6 +63,12 @@ M.setup = function(opts)
             vim.keymap.set("n", "<C-c>", function()
                 t:send("\x03", false)
             end, { buffer = t.bufnr })
+        end,
+        on_stdout = function(_, _, data, _)
+            for _, line in ipairs(data) do
+                -- remove color codes
+                on_output_line(string.gsub(line, "%b\27m", ""))
+            end
         end,
     })
 end
