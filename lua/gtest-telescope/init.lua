@@ -428,7 +428,6 @@ local telescope_pick_tests = function(tests, on_choice, single_selection)
     local actions = require("telescope.actions")
     local finders = require("telescope.finders")
     local pickers = require("telescope.pickers")
-    local utils = require("telescope.utils")
 
     local on_choice_wrapped = vim.schedule_wrap(on_choice)
 
@@ -486,6 +485,10 @@ local telescope_pick_tests = function(tests, on_choice, single_selection)
 
                     on_choice_wrapped(selected_tests)
                 end)
+
+                for key, act in pairs(config.mappings) do
+                    map({ "i", "n" }, key, act, {})
+                end
 
                 if single_selection then
                     map({ "i", "n" }, "<Tab>", actions.nop, {})
