@@ -1,10 +1,6 @@
---- @class gtest-telescope.config.Icon
---- @field icon string
---- @field hl_group string
-
 --- @class gtest-telescope.config.Icons
---- @field success gtest-telescope.config.Icon
---- @field failure gtest-telescope.config.Icon
+--- @field success string
+--- @field failure string
 
 --- @class gtest-telescope.Config
 --- @field executables_folder string Path containing the test executables
@@ -37,14 +33,8 @@ local default_config = {
         request = "launch",
     },
     icons = {
-        failure = {
-            icon = "",
-            hl_group = "DiagnosticError",
-        },
-        success = {
-            icon = "",
-            hl_group = "DiagnosticOk",
-        },
+        failure = "",
+        success = "",
     },
 
     _suites_only = false,

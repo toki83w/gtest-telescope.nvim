@@ -62,13 +62,13 @@
 --- @field exe string
 --- @field json gtest-telescope.Json
 
--- TODO: check what happens when the file is modified - should we keep the previous results?
+-- FIXME: when resuming a picker, the cache needs to be validated (if exe changed, try to keep the selection)
 
 ---@enum TestState
-local TestState = { NONE = 0, SUCCESS = 1, FAILURE = 2 }
+local TestState = { NONE = 0, SUCCESS = 1, FAILURE = 2, OLD_SUCCESS = 3, OLD_FAILURE = 4 }
 
 --- @class gtest-telescope.TestEntry
---- @field display_func function(icon:table) -> string,table
+--- @field display_func function(item:table) -> string,table
 --- @field test_filter string
 --- @field exe string
 --- @field path string?
@@ -79,7 +79,7 @@ local TestState = { NONE = 0, SUCCESS = 1, FAILURE = 2 }
 
 --- @class gtest-telescope.MapItem
 --- @field suite gtest-telescope.TestEntry
---- @field tests gtest-telescope.TestEntry[]
+--- @field tests table<string, gtest-telescope.TestEntry>
 
 --- @alias gtest-telescope.TestMap table<string, gtest-telescope.MapItem>
 
@@ -105,6 +105,14 @@ local cache = {
     picker = nil,
     --- @type gtest-telescope.LastRun?
     last_run = nil,
+}
+
+local state_to_hl_group_map = {
+    [TestState.NONE] = nil,
+    [TestState.SUCCESS] = "GTestTelescopeSuccess",
+    [TestState.FAILURE] = "GTestTelescopeFailure",
+    [TestState.OLD_SUCCESS] = "GTestTelescopeOldSuccess",
+    [TestState.OLD_FAILURE] = "GTestTelescopeOldFailure",
 }
 
 --- @param line string
@@ -243,11 +251,11 @@ local make_entry_for_test_suite = function(suite_name, type_param, exe)
         text = text .. "  [" .. type_param .. "]"
     end
 
-    local f = function(icon)
+    local f = function(item)
         local style = { { { #suite_name, #text }, "TelescopeResultsComment" } }
 
-        if icon then
-            table.insert(style, 1, { { 0, #suite_name }, icon.hl_group })
+        if item.value.state ~= TestState.NONE then
+            table.insert(style, 1, { { 0, #suite_name }, state_to_hl_group_map[item.value.state] })
         end
 
         return text, style
@@ -270,22 +278,35 @@ end
 --- @param exe string
 --- @return gtest-telescope.TestEntry
 local make_entry_for_single_test = function(test, suite_name, exe)
-    local f = function(icon)
+    local icon_mapping = {
+        [TestState.NONE] = nil,
+        [TestState.SUCCESS] = config.icons.success,
+        [TestState.FAILURE] = config.icons.failure,
+        [TestState.OLD_SUCCESS] = config.icons.success,
+        [TestState.OLD_FAILURE] = config.icons.failure,
+    }
+
+    local base_text = " " .. test.name .. "  " .. suite_name
+
+    local f = function(item)
         local text
         local style
 
+        local icon = icon_mapping[item.value.state]
+
         if icon then
-            text = icon.icon .. " " .. test.name .. "  " .. suite_name
+            text = icon .. base_text
             style = {
-                { { 0, #icon.icon }, icon.hl_group },
-                { { #icon.icon + 1 + #test.name + 2, #text }, "TelescopeResultsComment" },
+                { { 0, #icon }, state_to_hl_group_map[item.value.state] },
+                { { #icon + 1 + #test.name + 2, #text }, "TelescopeResultsComment" },
             }
         else
-            text = "  " .. test.name .. "  " .. suite_name
+            text = " " .. base_text
             style = {
                 { { 2 + #test.name + 2, #text }, "TelescopeResultsComment" },
             }
         end
+
         return text, style
     end
 
@@ -314,7 +335,7 @@ local generate_test_list_from_report = function(report)
         for _, test in ipairs(testsuite.testsuite) do
             local test_entry = make_entry_for_single_test(test, testsuite.name, report.exe)
             table.insert(list, test_entry)
-            table.insert(map_item.tests, test_entry)
+            map_item.tests[test.name] = test_entry
 
             if test.type_param then
                 type_param = test.type_param
@@ -332,18 +353,36 @@ end
 
 --- @param map gtest-telescope.TestMap
 local set_suites_state = function(map)
+    -- at least one failure -> failure
+    -- at least one old failure -> old failure
+    -- all success -> success
+    -- all old success -> old success
     for _, item in pairs(map) do
-        local state = TestState.SUCCESS
-        for _, test in ipairs(item.tests) do
-            if test.state == TestState.NONE then
-                state = TestState.NONE
-            elseif test.state == TestState.FAILURE then
+        local all_old_success = true
+        local all_success = true
+        local state = TestState.NONE
+
+        for _, test in pairs(item.tests) do
+            if test.state == TestState.FAILURE then
                 state = TestState.FAILURE
                 break
             end
+
+            if test.state == TestState.OLD_FAILURE then
+                state = TestState.OLD_FAILURE
+            end
+
+            all_success = all_success and test.state == TestState.SUCCESS
+            all_old_success = all_old_success and test.state == TestState.OLD_SUCCESS
         end
-        item.suite.state = state
-        -- __log("suite", _, "state", vim.inspect(state))
+
+        if all_success then
+            item.suite.state = TestState.SUCCESS
+        elseif all_old_success then
+            item.suite.state = TestState.OLD_SUCCESS
+        else
+            item.suite.state = state
+        end
     end
 end
 
@@ -356,6 +395,31 @@ local set_suites_state_from_list = function(tests)
 
     for exe, _ in pairs(exes) do
         set_suites_state(cache.test_lists[exe].map)
+    end
+end
+
+--- @param old_map gtest-telescope.TestMap
+--- @param new_map gtest-telescope.TestMap
+local copy_suite_states = function(old_map, new_map)
+    local new_state_mapping = {
+        [TestState.NONE] = TestState.NONE,
+        [TestState.SUCCESS] = TestState.OLD_SUCCESS,
+        [TestState.FAILURE] = TestState.OLD_FAILURE,
+        [TestState.OLD_SUCCESS] = TestState.OLD_SUCCESS,
+        [TestState.OLD_FAILURE] = TestState.OLD_FAILURE,
+    }
+
+    for suite_name, item in pairs(old_map) do
+        local new_item = new_map[suite_name]
+        if new_item then
+            for test_name, entry in pairs(item.tests) do
+                local new_entry = new_item.tests[test_name]
+                if new_entry then
+                    new_entry.state = new_state_mapping[entry.state]
+                    __log("copy state", new_entry.state, "for test", test_name)
+                end
+            end
+        end
     end
 end
 
@@ -377,6 +441,10 @@ local get_test_list = function(executables)
         end
 
         local list, map = generate_test_list_from_report(report)
+
+        if cached then
+            copy_suite_states(cached.map, map)
+        end
 
         local entry = { tests = list, map = map, mtime = mt }
         cache.test_lists[exe] = entry
@@ -491,11 +559,7 @@ local telescope_pick_tests = function(tests, on_choice, single_selection)
                 entry_maker = function(entry)
                     return {
                         value = entry,
-                        display = function(item)
-                            local icon = item.value.state == TestState.SUCCESS and config.icons.success
-                                or item.value.state == TestState.FAILURE and config.icons.failure
-                            return item.value.display_func(icon)
-                        end,
+                        display = entry.display_func,
                         ordinal = entry.test_filter,
                         path = entry.path, -- used by edit action
                         lnum = entry.line, -- used by edit action
@@ -719,6 +783,11 @@ local M = {}
 M.setup = function(opts)
     config.update(opts)
     terminal.setup(config.toggleterm, parse_output_line)
+
+    vim.api.nvim_set_hl(0, "GTestTelescopeSuccess", { link = "DiagnosticOk" })
+    vim.api.nvim_set_hl(0, "GTestTelescopeFailure", { link = "DiagnosticError" })
+    vim.api.nvim_set_hl(0, "GTestTelescopeOldSuccess", { link = "DiagnosticHint" })
+    vim.api.nvim_set_hl(0, "GTestTelescopeOldFailure", { link = "DiagnosticWarn" })
 end
 
 M.clear_cache = function()
