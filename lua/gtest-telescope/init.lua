@@ -62,7 +62,6 @@
 --- @field exe string
 --- @field json gtest-telescope.Json
 
--- TODO: toggle show only test suites
 -- TODO: icon for test suites (failure if any failure, success if all success)
 -- TODO: check what happens when the file is modified - should we keep the previous results?
 
@@ -400,10 +399,14 @@ local get_sorter = function()
 
     return Sorter:new({
         -- self
-        -- prompt (which is the text on the line)
-        -- line (entry.ordinal)
-        -- entry (the whole entry)
-        scoring_function = function(_, prompt, line, _)
+        --- @param prompt string text in the prompt line
+        --- @param line string entry.ordinal
+        --- @param entry table
+        scoring_function = function(_, prompt, line, entry)
+            if config._suites_only and entry.value.test_suite then
+                return -1
+            end
+
             if #prompt < 2 then
                 return 1
             end

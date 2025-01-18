@@ -15,6 +15,7 @@
 --- @field dap_config table Dap config
 --- @field icons gtest-telescope.config.Icons
 --- @field update function
+--- @field _suites_only boolean private
 
 local default_config = {
     executables_folder = "build/clang/bin",
@@ -23,6 +24,7 @@ local default_config = {
         ["<M-a>"] = "select_all",
         ["<M-x>"] = "drop_all",
         ["<M-CR>"] = require("gtest-telescope.actions").go_to_test_definition,
+        ["<M-Tab>"] = require("gtest-telescope.actions").toggle_show_test_suites_only,
     },
     telescope = {
         sorting_strategy = "ascending",
@@ -44,6 +46,8 @@ local default_config = {
             hl_group = "DiagnosticOk",
         },
     },
+
+    _suites_only = false,
 }
 
 --- @type gtest-telescope.Config
