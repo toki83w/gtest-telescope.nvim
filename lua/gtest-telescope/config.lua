@@ -1,9 +1,18 @@
+--- @class gtest-telescope.config.Icon
+--- @field icon string
+--- @field hl_group string
+
+--- @class gtest-telescope.config.Icons
+--- @field success gtest-telescope.config.Icon
+--- @field failure gtest-telescope.config.Icon
+
 --- @class gtest-telescope.Config
 --- @field executables_folder string Path containing the test executables
 --- @field executables_pattern string|string[] Pattern(s) to identify gtest executables
 --- @field telescope table Custom configuration for the telescope picker
---- @field toggleterm gtest-telescope.TerminalConfig Custom configuration for the toggleterm terminal
+--- @field toggleterm gtest-telescope.config.Terminal Custom configuration for the toggleterm terminal
 --- @field dap_config table Dap config
+--- @field icons gtest-telescope.config.Icons
 --- @field update function
 
 local default_config = {

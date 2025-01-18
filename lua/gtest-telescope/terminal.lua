@@ -1,6 +1,6 @@
 local Terminal = require("toggleterm.terminal").Terminal
 
---- @class gtest-telescope.TerminalConfig
+--- @class gtest-telescope.config.Terminal
 --- @field size number?
 --- @field direction 'float'|'vertical'|'horizontal'|'tab'?
 --- @field highlights ToggleTermHighlights?
@@ -13,19 +13,19 @@ local Terminal = require("toggleterm.terminal").Terminal
 --- @field display_name string
 
 --- @class gtest-telescope.Terminal
---- @field setup function(opts: gtest-telescope.TerminalConfig)
+--- @field setup function(opts: gtest-telescope.config.Terminal)
 --- @field exec function(cmd: string, dir: string)
 --- @field toggle_term function()
 
 --- @type Terminal
 local term
 
---- @type gtest-telescope.TerminalConfig
+--- @type gtest-telescope.config.Terminal
 local config
 
 local M = {}
 
---- @param opts gtest-telescope.TerminalConfig
+--- @param opts gtest-telescope.config.Terminal
 --- @param on_output_line function(string)
 M.setup = function(opts, on_output_line)
     config = vim.tbl_extend("keep", opts or {}, {
