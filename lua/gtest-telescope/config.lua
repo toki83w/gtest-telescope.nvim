@@ -56,7 +56,11 @@ local M = vim.deepcopy(default_config)
 ---@param opts table
 M.update = function(opts)
     for k, v in pairs(opts or {}) do
-        M[k] = v
+        if type(v) == "table" then
+            M[k] = vim.tbl_deep_extend("force", M[k], v)
+        else
+            M[k] = v
+        end
     end
 
     if M.executables_folder:sub(1, 1) ~= "/" then
