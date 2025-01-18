@@ -62,7 +62,6 @@
 --- @field exe string
 --- @field json gtest-telescope.Json
 
--- TODO: icon for test suites (failure if any failure, success if all success)
 -- TODO: check what happens when the file is modified - should we keep the previous results?
 
 ---@enum TestState
@@ -78,8 +77,15 @@ local TestState = { NONE = 0, SUCCESS = 1, FAILURE = 2 }
 --- @field type_param string?
 --- @field state TestState
 
---- @class gtest-telescope.CachedTestList
+--- @class gtest-telescope.MapItem
+--- @field suite gtest-telescope.TestEntry
 --- @field tests gtest-telescope.TestEntry[]
+
+--- @alias gtest-telescope.TestMap table<string, gtest-telescope.MapItem>
+
+--- @class gtest-telescope.CachedTestList
+--- @field tests gtest-telescope.TestEntry[] flat list of tests
+--- @field map gtest-telescope.TestMap tests grouped by suite
 --- @field mtime table
 
 --- @class gtest-telescope.LastRun
@@ -127,12 +133,9 @@ local parse_output_line = function(line)
     end
 
     local set_state = function(test_name, state)
-        -- __log("parsed test", test_name)
         for _, test in ipairs(tests) do
-            __log(test.test_filter)
             if test.test_filter == test_name then
                 test.state = state
-                -- __log(test_name, "state", state)
                 return
             end
         end
@@ -240,12 +243,18 @@ local make_entry_for_test_suite = function(suite_name, type_param, exe)
         text = text .. "  [" .. type_param .. "]"
     end
 
-    local style = { { { #suite_name, #text }, "TelescopeResultsComment" } }
+    local f = function(icon)
+        local style = { { { #suite_name, #text }, "TelescopeResultsComment" } }
+
+        if icon then
+            table.insert(style, 1, { { 0, #suite_name }, icon.hl_group })
+        end
+
+        return text, style
+    end
 
     return {
-        display_func = function(_)
-            return text, style
-        end,
+        display_func = f,
         test_filter = suite_name .. ".*",
         exe = exe,
         path = nil,
@@ -293,25 +302,61 @@ local make_entry_for_single_test = function(test, suite_name, exe)
 end
 
 --- @param report gtest-telescope.JsonReport
---- @return gtest-telescope.TestEntry[]?
+--- @return gtest-telescope.TestEntry[], gtest-telescope.TestMap
 local generate_test_list_from_report = function(report)
-    local tests = {}
+    local list = {}
+    local map = {}
 
     for _, testsuite in ipairs(report.json.testsuites) do
         local type_param
+        local map_item = { tests = {}, suite = nil }
 
         for _, test in ipairs(testsuite.testsuite) do
-            table.insert(tests, make_entry_for_single_test(test, testsuite.name, report.exe))
+            local test_entry = make_entry_for_single_test(test, testsuite.name, report.exe)
+            table.insert(list, test_entry)
+            table.insert(map_item.tests, test_entry)
 
             if test.type_param then
                 type_param = test.type_param
             end
         end
 
-        table.insert(tests, make_entry_for_test_suite(testsuite.name, type_param, report.exe))
+        local suite_entry = make_entry_for_test_suite(testsuite.name, type_param, report.exe)
+        table.insert(list, suite_entry)
+        map_item.suite = suite_entry
+        map[testsuite.name] = map_item
     end
 
-    return tests
+    return list, map
+end
+
+--- @param map gtest-telescope.TestMap
+local set_suites_state = function(map)
+    for _, item in pairs(map) do
+        local state = TestState.SUCCESS
+        for _, test in ipairs(item.tests) do
+            if test.state == TestState.NONE then
+                state = TestState.NONE
+            elseif test.state == TestState.FAILURE then
+                state = TestState.FAILURE
+                break
+            end
+        end
+        item.suite.state = state
+        -- __log("suite", _, "state", vim.inspect(state))
+    end
+end
+
+--- @param tests gtest-telescope.TestEntry[]
+local set_suites_state_from_list = function(tests)
+    local exes = {}
+    for _, test in ipairs(tests) do
+        exes[test.exe] = 1
+    end
+
+    for exe, _ in pairs(exes) do
+        set_suites_state(cache.test_lists[exe].map)
+    end
 end
 
 --- @param executables string|string[]
@@ -322,6 +367,7 @@ local get_test_list = function(executables)
         local cached = cache.test_lists[exe]
 
         if cached and (cached.mtime.sec > mt.sec or (cached.mtime.sec == mt.sec and cached.mtime.nsec >= mt.nsec)) then
+            set_suites_state(cached.map)
             return cached.tests
         end
 
@@ -330,15 +376,13 @@ local get_test_list = function(executables)
             return {}
         end
 
-        local test_list = generate_test_list_from_report(report)
-        if not test_list then
-            return {}
-        end
+        local list, map = generate_test_list_from_report(report)
 
-        local entry = { tests = test_list, mtime = mt }
+        local entry = { tests = list, map = map, mtime = mt }
         cache.test_lists[exe] = entry
 
-        return test_list
+        set_suites_state(map)
+        return list
     end
 
     if type(executables) == "string" then
@@ -714,6 +758,7 @@ M.resume_last = function()
 
     -- NOTE: selected items are not highlighted, but ":Telescope resume" does the same
     cache.picker.get_window_options = nil
+    set_suites_state_from_list(cache.last_run and cache.last_run.tests or {})
     require("telescope.pickers").new(config.telescope, cache.picker):find()
 end
 
