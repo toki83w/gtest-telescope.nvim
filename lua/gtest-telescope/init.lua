@@ -278,33 +278,13 @@ end
 --- @param exe string
 --- @return gtest-telescope.TestEntry
 local make_entry_for_single_test = function(test, suite_name, exe)
-    local icon_mapping = {
-        [TestState.NONE] = nil,
-        [TestState.SUCCESS] = config.icons.success,
-        [TestState.FAILURE] = config.icons.failure,
-        [TestState.OLD_SUCCESS] = config.icons.success,
-        [TestState.OLD_FAILURE] = config.icons.failure,
-    }
-
-    local base_text = " " .. test.name .. "  " .. suite_name
+    local text = "  " .. test.name .. "  " .. suite_name
 
     local f = function(item)
-        local text
-        local style
+        local style = { { { 2 + #test.name + 2, #text }, "TelescopeResultsComment" } }
 
-        local icon = icon_mapping[item.value.state]
-
-        if icon then
-            text = icon .. base_text
-            style = {
-                { { 0, #icon }, state_to_hl_group_map[item.value.state] },
-                { { #icon + 1 + #test.name + 2, #text }, "TelescopeResultsComment" },
-            }
-        else
-            text = " " .. base_text
-            style = {
-                { { 2 + #test.name + 2, #text }, "TelescopeResultsComment" },
-            }
+        if item.value.state ~= TestState.NONE then
+            table.insert(style, 1, { { 0, 2 + #test.name }, state_to_hl_group_map[item.value.state] })
         end
 
         return text, style
@@ -363,6 +343,9 @@ local set_suites_state = function(map)
         local state = TestState.NONE
 
         for _, test in pairs(item.tests) do
+            all_success = all_success and test.state == TestState.SUCCESS
+            all_old_success = all_old_success and test.state == TestState.OLD_SUCCESS
+
             if test.state == TestState.FAILURE then
                 state = TestState.FAILURE
                 break
@@ -371,9 +354,6 @@ local set_suites_state = function(map)
             if test.state == TestState.OLD_FAILURE then
                 state = TestState.OLD_FAILURE
             end
-
-            all_success = all_success and test.state == TestState.SUCCESS
-            all_old_success = all_old_success and test.state == TestState.OLD_SUCCESS
         end
 
         if all_success then
@@ -416,7 +396,6 @@ local copy_suite_states = function(old_map, new_map)
                 local new_entry = new_item.tests[test_name]
                 if new_entry then
                     new_entry.state = new_state_mapping[entry.state]
-                    __log("copy state", new_entry.state, "for test", test_name)
                 end
             end
         end

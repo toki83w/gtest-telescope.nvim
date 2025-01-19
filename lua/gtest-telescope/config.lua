@@ -1,7 +1,3 @@
---- @class gtest-telescope.config.Icons
---- @field success string
---- @field failure string
-
 --- @class gtest-telescope.Config
 --- @field executables_folder string Path containing the test executables
 --- @field executables_pattern string|string[] Pattern(s) to identify gtest executables
@@ -9,7 +5,6 @@
 --- @field telescope table Custom configuration for the telescope picker
 --- @field toggleterm gtest-telescope.config.Terminal Custom configuration for the toggleterm terminal
 --- @field dap_config table Dap config
---- @field icons gtest-telescope.config.Icons
 --- @field update function
 --- @field _suites_only boolean private
 
@@ -31,10 +26,6 @@ local default_config = {
     dap_config = {
         type = "cppdbg",
         request = "launch",
-    },
-    icons = {
-        failure = "",
-        success = "",
     },
 
     _suites_only = false,
