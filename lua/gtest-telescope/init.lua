@@ -92,6 +92,12 @@ local TestState = { NONE = 0, SUCCESS = 1, FAILURE = 2, OLD_SUCCESS = 3, OLD_FAI
 --- @field on_choice function(selection:gtest-telescope.TestEntry[])
 --- @field tests gtest-telescope.TestEntry[]
 
+--- @class gtest-telescope.QuickfixEntry
+--- @field filename string
+--- @field lnum number
+--- @field text string
+--- @field type string
+
 local config = require("gtest-telescope.config")
 local terminal = require("gtest-telescope.terminal")
 
@@ -102,6 +108,8 @@ end
 local cache = {
     --- @type table<string, gtest-telescope.CachedTestList>
     test_lists = {},
+    --- @type gtest-telescope.QuickfixEntry[]
+    quickfix_entries = {},
     picker = nil,
     --- @type gtest-telescope.LastRun?
     last_run = nil,
@@ -115,13 +123,50 @@ local state_to_hl_group_map = {
     [TestState.OLD_FAILURE] = "GTestTelescopeOldFailure",
 }
 
+--- @class QuickfixParser
+--- @field parse function(string)
+local quickfix_parser = {
+    --- type gtest-telescope.QuickfixEntry?
+    _entry = nil,
+
+    --- @param line string
+    parse = function(self, line)
+        -- /mnt/DEV/git/tests/components/CanOpenDs402EncoderTest.cpp:890: Failure
+        -- Expected equality of these values:
+        --   absolutePosition.data()
+        --     Which is: 2000
+        --   2000.1
+        --     Which is: 2000.0999999999999
+        -- [  FAILED  ] CanOpenDs402EncoderBehaviorTest.Conversion (10 ms)
+
+        local pattern_start = "(.+):(%d+):%s*Failure"
+        local pattern_end = "%[  FAILED  %]%s*%w+%.%w+"
+
+        local path, lnum = line:match(pattern_start)
+
+        if path then
+            self._entry = {
+                filename = path,
+                lnum = lnum,
+                text = "",
+                type = "E",
+            }
+            table.insert(cache.quickfix_entries, self._entry)
+        elseif line:match(pattern_end) then
+            self._entry = nil
+        elseif self._entry then
+            self._entry.text = self._entry.text .. "\n" .. line
+        end
+    end,
+}
+
 --- @param line string
-local parse_output_line = function(line)
+local parse_success_failure = function(line)
     -- [  FAILED  ] CanOpenDs402EncoderTest.Creation (20 ms)
     -- [       OK ] CanOpenDs402EncoderTest.CreationWithMissingOptions (36 ms)
 
-    local successPattern = "%[       OK %]%s*(%w+%.%w+)"
-    local failurePattern = "%[  FAILED  %]%s*(%w+%.%w+)"
+    local pattern_success = "%[       OK %]%s*(%w+%.%w+)"
+    local pattern_failure = "%[  FAILED  %]%s*(%w+%.%w+)"
 
     if not cache.last_run or not cache.last_run.tests or not cache.test_lists then
         return
@@ -149,17 +194,23 @@ local parse_output_line = function(line)
         end
     end
 
-    local test_name = parse(successPattern)
+    local test_name = parse(pattern_success)
     if test_name then
         set_state(test_name, TestState.SUCCESS)
         return
     end
 
-    test_name = parse(failurePattern)
+    test_name = parse(pattern_failure)
     if test_name then
         set_state(test_name, TestState.FAILURE)
         return
     end
+end
+
+--- @param line string
+local parse_output_line = function(line)
+    parse_success_failure(line)
+    quickfix_parser:parse(line)
 end
 
 --- @return string[]
@@ -572,6 +623,7 @@ local telescope_pick_tests = function(tests, on_choice, single_selection)
                         on_choice = on_choice_wrapped,
                         tests = selected_tests,
                     }
+                    cache.quickfix_entries = {}
 
                     on_choice_wrapped(selected_tests)
                 end)
@@ -797,6 +849,18 @@ end
 
 M.debug_tests_current_line = function()
     pick_tests_current_line(debug_test, true)
+end
+
+M.send_test_results_to_quickfix = function()
+    if #cache.quickfix_entries == 0 then
+        return
+    end
+
+    vim.api.nvim_exec_autocmds("QuickFixCmdPre", {})
+    vim.fn.setqflist(cache.quickfix_entries, " ")
+    vim.fn.setqflist({}, "a", { title = "(GTest-Telescope) Latest failures" })
+    vim.api.nvim_exec_autocmds("QuickFixCmdPost", {})
+    vim.cmd("copen")
 end
 
 M.resume_last = function()

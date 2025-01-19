@@ -88,8 +88,10 @@ M.setup = function(opts, on_output_line)
         end,
         on_stdout = function(_, _, data, _)
             for _, line in ipairs(data) do
-                -- remove color codes
-                on_output_line(string.gsub(line, "%b\27m", ""))
+                -- remove color codes and eol
+                line = string.gsub(line, "%b\27m", "")
+                line = string.gsub(line, "\13", "")
+                on_output_line(line)
             end
         end,
     })
