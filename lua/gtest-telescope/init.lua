@@ -115,7 +115,7 @@ local cache = {
     last_run = nil,
 }
 
-local state_to_hl_group_map = {
+local state_to_hl_group_mapping = {
     [TestState.NONE] = nil,
     [TestState.SUCCESS] = "GTestTelescopeSuccess",
     [TestState.FAILURE] = "GTestTelescopeFailure",
@@ -282,6 +282,7 @@ end
 --- @param path string
 --- @return table<string, number>
 local get_mtime = function(path)
+    ---@diagnostic disable-next-line: undefined-field
     local st = vim.uv.fs_stat(path)
 
     if not st then
@@ -306,7 +307,7 @@ local make_entry_for_test_suite = function(suite_name, type_param, exe)
         local style = { { { #suite_name, #text }, "TelescopeResultsComment" } }
 
         if item.value.state ~= TestState.NONE then
-            table.insert(style, 1, { { 0, #suite_name }, state_to_hl_group_map[item.value.state] })
+            table.insert(style, 1, { { 0, #suite_name }, state_to_hl_group_mapping[item.value.state] })
         end
 
         return text, style
@@ -335,7 +336,7 @@ local make_entry_for_single_test = function(test, suite_name, exe)
         local style = { { { 2 + #test.name + 2, #text }, "TelescopeResultsComment" } }
 
         if item.value.state ~= TestState.NONE then
-            table.insert(style, 1, { { 0, 2 + #test.name }, state_to_hl_group_map[item.value.state] })
+            table.insert(style, 1, { { 0, 2 + #test.name }, state_to_hl_group_mapping[item.value.state] })
         end
 
         return text, style
@@ -869,6 +870,7 @@ M.resume_last = function()
     end
 
     -- NOTE: selected items are not highlighted, but ":Telescope resume" does the same
+    ---@diagnostic disable-next-line: inject-field
     cache.picker.get_window_options = nil
     set_suites_state_from_list(cache.last_run and cache.last_run.tests or {})
     require("telescope.pickers").new(config.telescope, cache.picker):find()
