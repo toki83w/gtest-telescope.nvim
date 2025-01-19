@@ -165,45 +165,44 @@ local parse_success_failure = function(line)
     -- [  FAILED  ] CanOpenDs402EncoderTest.Creation (20 ms)
     -- [       OK ] CanOpenDs402EncoderTest.CreationWithMissingOptions (36 ms)
 
-    local pattern_success = "%[       OK %]%s*(%w+%.%w+)"
-    local pattern_failure = "%[  FAILED  %]%s*(%w+%.%w+)"
+    local pattern_success = "%[       OK %]%s*(%w+)%.(%w+)"
+    local pattern_failure = "%[  FAILED  %]%s*(%w+)%.(%w+)"
 
     if not cache.last_run or not cache.last_run.tests or not cache.test_lists then
         return
     end
 
+    -- FIXME: support multiple exe
     local exe = cache.last_run.tests[1].exe
 
     local tests = cache.test_lists[exe]
-    if not tests or not tests.tests then
+    if not tests or not tests.map then
         return
     end
-    tests = tests.tests
 
-    local parse = function(pattern)
-        local _, _, test = string.find(line, pattern)
-        return test
-    end
+    local map = tests.map
 
-    local set_state = function(test_name, state)
-        for _, test in ipairs(tests) do
-            if test.test_filter == test_name then
+    local set_state = function(pattern, state)
+        local suite_name, test_name = line:match(pattern)
+        if not suite_name then
+            return false
+        end
+
+        local map_item = map[suite_name]
+        if map_item then
+            local test = map_item.tests[test_name]
+            if test then
                 test.state = state
-                return
+                return true
             end
         end
+
+        return false
     end
 
-    local test_name = parse(pattern_success)
-    if test_name then
-        set_state(test_name, TestState.SUCCESS)
-        return
-    end
-
-    test_name = parse(pattern_failure)
-    if test_name then
-        set_state(test_name, TestState.FAILURE)
-        return
+    if set_state(pattern_success, TestState.SUCCESS) then
+    else
+        set_state(pattern_failure, TestState.FAILURE)
     end
 end
 
