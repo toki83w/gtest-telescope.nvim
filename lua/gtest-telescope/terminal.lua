@@ -23,6 +23,25 @@ local term
 --- @type gtest-telescope.config.Terminal
 local config
 
+local gF = function()
+    vim.cmd('execute "normal! yiW"')
+    local text = vim.api.nvim_exec2([[echo getreg('0')]], { output = true }).output
+    local path, lnum = text:match("(.+):(%d+)")
+
+    if not path then
+        return
+    end
+
+    if vim.fn.filereadable(path) == 0 then
+        return
+    end
+
+    term:close()
+
+    vim.cmd('execute "e ' .. path .. '"')
+    vim.cmd('execute "normal! ' .. lnum .. 'G"')
+end
+
 local M = {}
 
 --- @param opts gtest-telescope.config.Terminal
@@ -63,6 +82,9 @@ M.setup = function(opts, on_output_line)
             vim.keymap.set("n", "<C-c>", function()
                 t:send("\x03", false)
             end, { buffer = t.bufnr })
+
+            -- follow path in previous window
+            vim.keymap.set("n", "gF", gF, { buffer = t.bufnr })
         end,
         on_stdout = function(_, _, data, _)
             for _, line in ipairs(data) do
