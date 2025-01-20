@@ -98,8 +98,16 @@ local TestState = { NONE = 0, SUCCESS = 1, FAILURE = 2, OLD_SUCCESS = 3, OLD_FAI
 --- @field text string
 --- @field type string
 
+--- @class gtest-telescope.DiagnosticEntry
+--- @field lnum number
+--- @field col number
+--- @field severity vim.diagnostic.severty
+--- @field message string
+
 local config = require("gtest-telescope.config")
 local terminal = require("gtest-telescope.terminal")
+
+local diagnostic_namespace = vim.api.nvim_create_namespace("gtest-telescope.diagnostics")
 
 local __log = function(...)
     print(...)
@@ -110,6 +118,8 @@ local cache = {
     test_lists = {},
     --- @type gtest-telescope.QuickfixEntry[]
     quickfix_entries = {},
+    --- @type table<string, gtest-telescope.DiagnosticEntry[]>
+    diagnostic_entries = {},
     picker = nil,
     --- @type gtest-telescope.LastRun?
     last_run = nil,
@@ -123,11 +133,11 @@ local state_to_hl_group_mapping = {
     [TestState.OLD_FAILURE] = "GTestTelescopeOldFailure",
 }
 
---- @class QuickfixParser
---- @field parse function(string)
-local quickfix_parser = {
-    --- type gtest-telescope.QuickfixEntry?
-    _entry = nil,
+local diagnostic_parser = {
+    --- @type gtest-telescope.QuickfixEntry?
+    _q_entry = nil,
+    --- @type gtest-telescope.DiagnosticEntry?
+    _d_entry = nil,
 
     --- @param line string
     parse = function(self, line)
@@ -143,25 +153,39 @@ local quickfix_parser = {
         local pattern_end = "%[  FAILED  %]%s*%w+%.%w+"
 
         local path, lnum = line:match(pattern_start)
+        lnum = tonumber(lnum)
 
         if path then
-            self._entry = {
+            self._q_entry = {
                 filename = path,
                 lnum = lnum,
                 text = "",
                 type = "E",
             }
-            table.insert(cache.quickfix_entries, self._entry)
+            table.insert(cache.quickfix_entries, self._q_entry)
+
+            self._d_entry = {
+                lnum = lnum - 1,
+                col = 0,
+                severity = vim.diagnostic.severity.ERROR,
+                message = "",
+            }
+            if not cache.diagnostic_entries[path] then
+                cache.diagnostic_entries[path] = {}
+            end
+            table.insert(cache.diagnostic_entries[path], self._d_entry)
         elseif line:match(pattern_end) then
-            self._entry = nil
-        elseif self._entry then
-            self._entry.text = self._entry.text .. "\n" .. line
+            self._q_entry = nil
+            self._d_entry = nil
+        elseif self._q_entry then
+            self._q_entry.text = #self._q_entry.text == 0 and line or (self._q_entry.text .. "\n" .. line)
+            self._d_entry.message = self._q_entry.text
         end
     end,
 }
 
 --- @param line string
-local parse_success_failure = function(line)
+local parse_test_state = function(line)
     -- [  FAILED  ] CanOpenDs402EncoderTest.Creation (20 ms)
     -- [       OK ] CanOpenDs402EncoderTest.CreationWithMissingOptions (36 ms)
 
@@ -208,8 +232,8 @@ end
 
 --- @param line string
 local parse_output_line = function(line)
-    parse_success_failure(line)
-    quickfix_parser:parse(line)
+    parse_test_state(line)
+    diagnostic_parser:parse(line)
 end
 
 --- @return string[]
@@ -624,6 +648,7 @@ local telescope_pick_tests = function(tests, on_choice, single_selection)
                         tests = selected_tests,
                     }
                     cache.quickfix_entries = {}
+                    cache.diagnostic_entries = {}
 
                     on_choice_wrapped(selected_tests)
                 end)
@@ -819,12 +844,27 @@ M.setup = function(opts)
     vim.api.nvim_set_hl(0, "GTestTelescopeFailure", { link = "DiagnosticError" })
     vim.api.nvim_set_hl(0, "GTestTelescopeOldSuccess", { link = "DiagnosticHint" })
     vim.api.nvim_set_hl(0, "GTestTelescopeOldFailure", { link = "DiagnosticWarn" })
+
+    vim.api.nvim_create_autocmd({ "BufEnter" }, {
+        group = vim.api.nvim_create_augroup("gtest-telescope", { clear = true }),
+        pattern = { "*.cpp", "*.hpp", "*.h", "*.cxx", "*.cc" },
+        desc = "GTest failures",
+        callback = function(args)
+            vim.diagnostic.set(diagnostic_namespace, args.buf, cache.diagnostic_entries[args.file] or {})
+        end,
+    })
 end
 
 M.clear_cache = function()
     cache.test_lists = {}
     cache.picker = nil
     cache.last_run = nil
+end
+
+M.clear_diagnostics = function()
+    local path = vim.api.nvim_buf_get_name(0)
+    cache.diagnostic_entries[path] = {}
+    vim.diagnostic.set(diagnostic_namespace, 0, {})
 end
 
 M.run_tests_single_exe = function()
