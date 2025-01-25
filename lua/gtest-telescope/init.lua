@@ -62,8 +62,6 @@
 --- @field exe string
 --- @field json gtest-telescope.Json
 
--- FIXME: when resuming a picker, the cache needs to be validated (if exe changed, try to keep the selection)
-
 ---@enum TestState
 local TestState = { NONE = 0, SUCCESS = 1, FAILURE = 2, OLD_SUCCESS = 3, OLD_FAILURE = 4 }
 
@@ -88,9 +86,14 @@ local TestState = { NONE = 0, SUCCESS = 1, FAILURE = 2, OLD_SUCCESS = 3, OLD_FAI
 --- @field map gtest-telescope.TestMap tests grouped by suite
 --- @field mtime table
 
+--- @enum gtest-telescope.RunMode
+local RunMode = { SINGLE_EXE = 0, CURRENT_BUFFER = 1, CURRENT_LINE = 2 }
+
 --- @class gtest-telescope.LastRun
 --- @field on_choice function(selection:gtest-telescope.TestEntry[])
 --- @field tests gtest-telescope.TestEntry[]
+--- @field mode gtest-telescope.RunMode
+--- @field mode_data string? @exe or buffer path
 
 --- @class gtest-telescope.QuickfixEntry
 --- @field filename string
@@ -532,7 +535,7 @@ local select_executable = function(executables, on_choice)
 end
 
 --- @return Sorter
-local get_sorter = function()
+local make_sorter = function()
     local Sorter = require("telescope.sorters").Sorter
 
     local cached_rx = {}
@@ -588,14 +591,36 @@ local get_sorter = function()
     })
 end
 
+local entry_maker = function(test)
+    return {
+        value = test,
+        display = test.display_func,
+        ordinal = test.test_filter,
+        path = test.path, -- used by edit action
+        lnum = test.line, -- used by edit action
+    }
+end
+
+--- @param tests gtest-telescope.TestEntry[]
+--- @param callback function?
+--- @return finder
+local make_finder = function(tests, callback)
+    return require("gtest-telescope.finder")({
+        results = tests,
+        entry_maker = entry_maker,
+        callback = callback,
+    })
+end
+
 --- @param tests gtest-telescope.TestEntry[]
 --- @param on_choice function(selection:gtest-telescope.TestEntry[])
 --- @param single_selection boolean
-local telescope_pick_tests = function(tests, on_choice, single_selection)
+--- @param mode gtest-telescope.RunMode
+--- @param mode_data string?
+local telescope_pick_tests = function(tests, on_choice, single_selection, mode, mode_data)
     local action_state = require("telescope.actions.state")
     local action_utils = require("telescope.actions.utils")
     local actions = require("telescope.actions")
-    local finders = require("telescope.finders")
     local pickers = require("telescope.pickers")
 
     local on_choice_wrapped = vim.schedule_wrap(on_choice)
@@ -608,19 +633,8 @@ local telescope_pick_tests = function(tests, on_choice, single_selection)
     pickers
         .new(config.telescope, {
             prompt_title = "Select Test",
-            finder = finders.new_table({
-                results = tests,
-                entry_maker = function(entry)
-                    return {
-                        value = entry,
-                        display = entry.display_func,
-                        ordinal = entry.test_filter,
-                        path = entry.path, -- used by edit action
-                        lnum = entry.line, -- used by edit action
-                    }
-                end,
-            }),
-            sorter = get_sorter(),
+            finder = make_finder(tests),
+            sorter = make_sorter(),
             attach_mappings = function(prompt_bufnr, map)
                 actions.select_default:replace(function()
                     local current_picker = action_state.get_current_picker(prompt_bufnr)
@@ -646,6 +660,8 @@ local telescope_pick_tests = function(tests, on_choice, single_selection)
                     cache.last_run = {
                         on_choice = on_choice_wrapped,
                         tests = selected_tests,
+                        mode = mode,
+                        mode_data = mode_data,
                     }
                     cache.quickfix_entries = {}
                     cache.diagnostic_entries = {}
@@ -748,21 +764,19 @@ local pick_tests_single_exe = function(on_choice, single_selection)
             return
         end
 
-        telescope_pick_tests(test_list, on_choice, single_selection)
+        telescope_pick_tests(test_list, on_choice, single_selection, RunMode.SINGLE_EXE, exe)
     end)
 end
 
---- @param on_choice function(selection:gtest-telescope.TestEntry[])
---- @param single_selection boolean
-local pick_tests_current_buffer = function(on_choice, single_selection)
+--- @param path string
+--- @return gtest-telescope.TestEntry[]?
+local test_list_from_path = function(path)
     local executables = find_executables()
     local test_list = get_test_list(executables)
 
-    local current_path = vim.api.nvim_buf_get_name(0)
-
     local test_suites = {}
     local filtered_list = vim.tbl_filter(function(item)
-        if item.path ~= current_path then
+        if item.path ~= path then
             return false
         end
 
@@ -779,7 +793,20 @@ local pick_tests_current_buffer = function(on_choice, single_selection)
         table.insert(filtered_list, make_entry_for_test_suite(test_suite, tbl.type_param, tbl.exe))
     end
 
-    telescope_pick_tests(filtered_list, on_choice, single_selection)
+    return filtered_list
+end
+
+--- @param on_choice function(selection:gtest-telescope.TestEntry[])
+--- @param single_selection boolean
+local pick_tests_current_buffer = function(on_choice, single_selection)
+    local buffer_path = vim.api.nvim_buf_get_name(0)
+    local test_list = test_list_from_path(buffer_path)
+
+    if not test_list then
+        return
+    end
+
+    telescope_pick_tests(test_list, on_choice, single_selection, RunMode.CURRENT_BUFFER, buffer_path)
 end
 
 --- @param on_choice function(selection:gtest-telescope.TestEntry[])
@@ -830,7 +857,7 @@ local pick_tests_current_line = function(on_choice, single_selection)
         table.insert(filtered_list, make_entry_for_test_suite(test_suite, tbl.type_param, tbl.exe))
     end
 
-    telescope_pick_tests(filtered_list, on_choice, single_selection)
+    telescope_pick_tests(filtered_list, on_choice, single_selection, RunMode.CURRENT_LINE)
 end
 
 local M = {}
@@ -904,15 +931,66 @@ M.send_test_results_to_quickfix = function()
 end
 
 M.resume_last = function()
-    if not cache.picker then
+    if not cache.picker or not cache.last_run then
         return
     end
 
-    -- NOTE: selected items are not highlighted, but ":Telescope resume" does the same
-    ---@diagnostic disable-next-line: inject-field
-    cache.picker.get_window_options = nil
-    set_suites_state_from_list(cache.last_run and cache.last_run.tests or {})
-    require("telescope.pickers").new(config.telescope, cache.picker):find()
+    local test_list
+    if cache.last_run.mode == RunMode.SINGLE_EXE then
+        test_list = get_test_list(cache.last_run.mode_data)
+    elseif cache.last_run.mode == RunMode.CURRENT_BUFFER then
+        test_list = test_list_from_path(cache.last_run.mode_data) or {}
+    end
+    -- Resume from current line is tricky because the file could have changed, the cursor could have moved, ... so it's difficult
+    -- to "refresh" the same list of before -> resume the previous picker without changes
+
+    -- update the suites state from the previous run
+    set_suites_state_from_list(cache.last_run.tests)
+
+    if test_list then
+        -- invalidate the cache, so that the picker will reload immediately the list of entries
+
+        ---@diagnostic disable-next-line: inject-field
+        cache.picker.get_window_options = nil
+        ---@diagnostic disable-next-line: inject-field
+        cache.picker.cache_picker = false
+    end
+
+    -- create a new picker, based on the cached one (will resume for mode current line)
+    local picker = require("telescope.pickers").new(config.telescope, cache.picker)
+    picker:find()
+
+    if test_list then
+        table.sort(test_list, function(a, b)
+            return a.test_filter < b.test_filter
+        end)
+
+        -- attach a callback to the finder, so that we can set the initial selection
+        local first_run = true
+        local new_finder = make_finder(test_list, function()
+            if not first_run then
+                return
+            end
+
+            first_run = false
+
+            local selection = {}
+            for _, test in ipairs(cache.last_run.tests) do
+                selection[test.test_filter] = true
+            end
+
+            local index = 1
+            for entry in picker.manager:iter() do
+                if selection[entry.value.test_filter] == true then
+                    picker:add_selection(picker:get_row(index))
+                end
+                index = index + 1
+            end
+        end)
+
+        -- set the new finder
+        picker:refresh(new_finder, {})
+    end
 end
 
 M.run_last = function()
