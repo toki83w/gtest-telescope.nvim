@@ -92,6 +92,7 @@ local RunMode = { SINGLE_EXE = 0, CURRENT_BUFFER = 1, CURRENT_LINE = 2 }
 --- @class gtest-telescope.LastRun
 --- @field on_choice function(selection:gtest-telescope.TestEntry[])
 --- @field tests gtest-telescope.TestEntry[]
+--- @field exes string[]
 --- @field mode gtest-telescope.RunMode
 --- @field mode_data string? @exe or buffer path
 
@@ -199,37 +200,35 @@ local parse_test_state = function(line)
         return
     end
 
-    -- FIXME: support multiple exe
-    local exe = cache.last_run.tests[1].exe
+    for _, exe in ipairs(cache.last_run.exes) do
+        local tests = cache.test_lists[exe]
 
-    local tests = cache.test_lists[exe]
-    if not tests or not tests.map then
-        return
-    end
+        if tests and tests.map then
+            local map = tests.map
 
-    local map = tests.map
+            local set_state = function(pattern, state)
+                local suite_name, test_name = line:match(pattern)
+                if not suite_name then
+                    return false
+                end
 
-    local set_state = function(pattern, state)
-        local suite_name, test_name = line:match(pattern)
-        if not suite_name then
-            return false
-        end
+                local map_item = map[suite_name]
+                if map_item then
+                    local test = map_item.tests[test_name]
+                    if test then
+                        test.state = state
+                        return true
+                    end
+                end
 
-        local map_item = map[suite_name]
-        if map_item then
-            local test = map_item.tests[test_name]
-            if test then
-                test.state = state
-                return true
+                return false
+            end
+
+            if set_state(pattern_success, TestState.SUCCESS) then
+            else
+                set_state(pattern_failure, TestState.FAILURE)
             end
         end
-
-        return false
-    end
-
-    if set_state(pattern_success, TestState.SUCCESS) then
-    else
-        set_state(pattern_failure, TestState.FAILURE)
     end
 end
 
@@ -652,14 +651,22 @@ local telescope_pick_tests = function(tests, on_choice, single_selection, mode, 
                     actions.close(prompt_bufnr)
 
                     local selected_tests = {}
+                    local exes_tbl = {}
                     for _, item in ipairs(selection) do
                         table.insert(selected_tests, item.value)
+                        exes_tbl[item.value.exe] = 1
+                    end
+
+                    local exes = {}
+                    for e, _ in pairs(exes_tbl) do
+                        table.insert(exes, e)
                     end
 
                     cache.picker = current_picker
                     cache.last_run = {
                         on_choice = on_choice_wrapped,
                         tests = selected_tests,
+                        exes = exes,
                         mode = mode,
                         mode_data = mode_data,
                     }
