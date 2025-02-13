@@ -917,11 +917,11 @@ M.debug_test_single_exe = function()
     pick_tests_single_exe(debug_test, true)
 end
 
-M.debug_tests_current_buffer = function()
+M.debug_test_current_buffer = function()
     pick_tests_current_buffer(debug_test, true)
 end
 
-M.debug_tests_current_line = function()
+M.debug_test_current_line = function()
     pick_tests_current_line(debug_test, true)
 end
 
