@@ -154,7 +154,7 @@ local diagnostic_parser = {
         -- [  FAILED  ] CanOpenDs402EncoderBehaviorTest.Conversion (10 ms)
 
         local pattern_start = "(.+):(%d+):%s*Failure"
-        local pattern_end = "%[  FAILED  %]%s*%w+%.%w+"
+        local pattern_end = "%[  FAILED  %]%s*[%w_/]+%.[%w_/]+"
 
         local path, lnum = line:match(pattern_start)
         lnum = tonumber(lnum)
@@ -193,8 +193,8 @@ local parse_test_state = function(line)
     -- [  FAILED  ] CanOpenDs402EncoderTest.Creation (20 ms)
     -- [       OK ] CanOpenDs402EncoderTest.CreationWithMissingOptions (36 ms)
 
-    local pattern_success = "%[       OK %]%s*(%w+)%.(%w+)"
-    local pattern_failure = "%[  FAILED  %]%s*(%w+)%.(%w+)"
+    local pattern_success = "%[       OK %]%s*([%w_/]+)%.([%w_/]+)"
+    local pattern_failure = "%[  FAILED  %]%s*([%w_/]+)%.([%w_/]+)"
 
     if not cache.last_run or not cache.last_run.tests or not cache.test_lists then
         return
